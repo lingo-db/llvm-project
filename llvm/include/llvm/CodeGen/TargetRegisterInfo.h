@@ -30,6 +30,8 @@
 #include <cassert>
 #include <cstdint>
 
+extern bool reserveLastRegister;
+
 namespace llvm {
 
 class BitVector;
