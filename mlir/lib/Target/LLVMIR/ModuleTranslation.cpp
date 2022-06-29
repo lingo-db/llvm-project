@@ -128,6 +128,11 @@ translateDataLayout(DataLayoutSpecInterface attribute,
 /// other sequential types recursively, from the individual constant values
 /// provided in `constants`. `shape` contains the number of elements in nested
 /// sequential types. Reports errors at `loc` and returns nullptr on error.
+void HackyAsHell::operator =(llvm::Value* ptr){
+  t->mapValue(v,ptr,*builder);
+}
+HackyAsHell::HackyAsHell(ModuleTranslation* t,llvm::IRBuilderBase* b,mlir::Value v):t(t),builder(b), v(v){}
+
 static llvm::Constant *
 buildSequentialConstant(ArrayRef<llvm::Constant *> &constants,
                         ArrayRef<int64_t> shape, llvm::Type *type,
@@ -389,10 +394,10 @@ llvm::Constant *mlir::LLVM::detail::getLLVMConstant(
 }
 
 ModuleTranslation::ModuleTranslation(Operation *module,
-                                     std::unique_ptr<llvm::Module> llvmModule)
+                                     std::unique_ptr<llvm::Module> llvmModule,detail::DebuggingLevel debuggingLevel)
     : mlirModule(module), llvmModule(std::move(llvmModule)),
       debugTranslation(
-          std::make_unique<DebugTranslation>(module, *this->llvmModule)),
+          std::make_unique<DebugTranslation>(module, *this->llvmModule)),debuggingLevel(debuggingLevel),
       typeTranslator(this->llvmModule->getContext()),
       iface(module->getContext()) {
   assert(satisfiesLLVMModule(mlirModule) &&
@@ -403,6 +408,18 @@ ModuleTranslation::~ModuleTranslation() {
     ompBuilder->finalize();
 }
 
+void ModuleTranslation::mapValue(Value mlir, llvm::Value *llvm,llvm::IRBuilderBase &builder) {
+    valueMapping[mlir] = llvm;
+    if(debuggingLevel==detail::DebuggingLevel::VARIABLES){
+      debugTranslation->mapValue(mlir,llvm,builder);
+    }
+}
+HackyAsHell ModuleTranslation::mapValue(Value value,llvm::IRBuilderBase &builder){
+    llvm::Value *&llvm = valueMapping[value];
+    assert(llvm == nullptr &&
+           "attempting to map a value that is already mapped");
+    return HackyAsHell(this,&builder,value);
+  }
 void ModuleTranslation::forgetMapping(Region &region) {
   SmallVector<Region *> toProcess;
   toProcess.push_back(&region);
@@ -593,8 +610,10 @@ LogicalResult ModuleTranslation::convertBlock(Block &bb, bool ignoreArguments,
   // Traverse operations.
   for (auto &op : bb) {
     // Set the current debug location within the builder.
-    builder.SetCurrentDebugLocation(
+    if(debuggingLevel!=detail::DebuggingLevel::OFF){
+      builder.SetCurrentDebugLocation(
         debugTranslation->translateLoc(op.getLoc(), subprogram));
+    }
 
     if (failed(convertOperation(op, builder)))
       return failure();
@@ -810,7 +829,9 @@ LogicalResult ModuleTranslation::convertOneFunction(LLVMFuncOp func) {
   llvm::Function *llvmFunc = lookupFunction(func.getName());
 
   // Translate the debug information for this function.
-  debugTranslation->translate(func, *llvmFunc);
+  if(debuggingLevel!=detail::DebuggingLevel::OFF){
+    debugTranslation->translate(func, *llvmFunc);
+  }
 
   // Add function arguments to the value remapping table.
   // If there was noalias info then we decorate each argument accordingly.
@@ -1079,7 +1100,11 @@ SmallVector<llvm::Value *> ModuleTranslation::lookupValues(ValueRange values) {
 
 const llvm::DILocation *
 ModuleTranslation::translateLoc(Location loc, llvm::DILocalScope *scope) {
-  return debugTranslation->translateLoc(loc, scope);
+    if(debuggingLevel!=detail::DebuggingLevel::OFF){
+      return debugTranslation->translateLoc(loc, scope);
+    }else{
+      return nullptr;
+    }
 }
 
 llvm::NamedMDNode *
@@ -1131,7 +1156,7 @@ prepareLLVMModule(Operation *m, llvm::LLVMContext &llvmContext,
 
 std::unique_ptr<llvm::Module>
 mlir::translateModuleToLLVMIR(Operation *module, llvm::LLVMContext &llvmContext,
-                              StringRef name) {
+                              StringRef name,LLVM::detail::DebuggingLevel debuggingLevel) {
   if (!satisfiesLLVMModule(module))
     return nullptr;
 
@@ -1142,7 +1167,7 @@ mlir::translateModuleToLLVMIR(Operation *module, llvm::LLVMContext &llvmContext,
 
   LLVM::ensureDistinctSuccessors(module);
 
-  ModuleTranslation translator(module, std::move(llvmModule));
+  ModuleTranslation translator(module, std::move(llvmModule),debuggingLevel);
   if (failed(translator.convertFunctionSignatures()))
     return nullptr;
   if (failed(translator.convertGlobals()))

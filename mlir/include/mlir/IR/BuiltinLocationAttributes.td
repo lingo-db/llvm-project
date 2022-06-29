@@ -175,6 +175,22 @@ def NameLoc : Builtin_LocationAttr<"NameLoc"> {
   ];
   let skipDefaultBuilders = 1;
 }
+def NamedResultsLoc : Builtin_LocationAttr<"NamedResultsLoc"> {
+  let summary = "A location that also contains names for operations results";
+  let description = [{"descr"}];
+  let parameters = (ins "ArrayAttr":$resultNames, "Location":$childLoc);
+  let builders = [
+    AttrBuilderWithInferredContext<(ins "ArrayAttr":$resultNames,
+                                        "Location":$childLoc), [{
+      return $_get(resultNames.getContext(), resultNames, childLoc);
+    }]>,
+    AttrBuilderWithInferredContext<(ins "ArrayAttr":$resultNames), [{
+      return $_get(resultNames.getContext(), resultNames,
+                   UnknownLoc::get(resultNames.getContext()));
+    }]>
+  ];
+  let skipDefaultBuilders = 1;
+}
 
 //===----------------------------------------------------------------------===//
 // OpaqueLoc

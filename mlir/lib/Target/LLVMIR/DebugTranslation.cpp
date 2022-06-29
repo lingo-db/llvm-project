@@ -8,10 +8,14 @@
 
 #include "DebugTranslation.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
+#include "llvm/ADT/TypeSwitch.h"
+
+#include <iostream>
 
 using namespace mlir;
 using namespace mlir::LLVM;
@@ -70,6 +74,8 @@ static FileLineColLoc extractFileLoc(Location loc) {
     return fileLoc;
   if (auto nameLoc = loc.dyn_cast<NameLoc>())
     return extractFileLoc(nameLoc.getChildLoc());
+  if (auto namedResultLoc = loc.dyn_cast<NamedResultsLoc>())
+    return extractFileLoc(namedResultLoc.getChildLoc());
   if (auto opaqueLoc = loc.dyn_cast<OpaqueLoc>())
     return extractFileLoc(opaqueLoc.getFallbackLocation());
   return FileLineColLoc();
@@ -93,9 +99,11 @@ void DebugTranslation::translate(LLVMFuncOp func, llvm::Function &llvmFunc) {
             });
           })
           .wasInterrupted();
-  if (hasCallWithoutDebugInfo)
-    return;
-
+  //if (hasCallWithoutDebugInfo)
+  //  return;
+  //func->walk([&](mlir::Operation* op)){
+  //  op->getLoc();
+  //}
   FileLineColLoc fileLoc = extractFileLoc(func.getLoc());
   auto *file =
       translateFile(fileLoc ? fileLoc.getFilename().strref() : "<unknown>");
@@ -113,7 +121,110 @@ void DebugTranslation::translate(LLVMFuncOp func, llvm::Function &llvmFunc) {
                              line, type, line, llvm::DINode::FlagZero, spFlags);
   llvmFunc.setSubprogram(program);
   builder.finalizeSubprogram(program);
+  currentFunc=program;
+  currentFile=file;
 }
+size_t getIdx(mlir::Operation* op, mlir::Value v){
+  size_t i=0;
+  for(auto vres:op->getResults()){
+    if(v==vres){
+      return i++;
+    }
+  }
+  assert(false&&"should not happen");
+}
+llvm::DIType *DebugTranslation::translateDebugType(Type type) {
+  // If the conversion is already known, just return it.
+  if (knownDebugTypeTranslations.count(type))
+    return knownDebugTypeTranslations.lookup(type);
+
+  // Dispatch to an appropriate function.
+  llvm::DIType *translated =
+      llvm::TypeSwitch<Type, llvm::DIType *>(type)
+          .Case([this](IntegerType t) {
+            llvm::DIType* createdType = nullptr;
+            switch(t.getWidth()){
+              case 1: createdType = builder.createBasicType("bool", 8, llvm::dwarf::DW_ATE_boolean); break;
+              case 8: createdType = builder.createBasicType("Int8", 8, llvm::dwarf::DW_ATE_signed); break;
+              case 16: createdType = builder.createBasicType("Int16", 16, llvm::dwarf::DW_ATE_signed); break;
+              case 32: createdType = builder.createBasicType("Int32", 32, llvm::dwarf::DW_ATE_signed); break;
+              case 64: createdType = builder.createBasicType("Int64", 64, llvm::dwarf::DW_ATE_signed); break;
+              case 128: createdType = builder.createBasicType("Int128", 64, llvm::dwarf::DW_ATE_signed); break;
+              default: llvm_unreachable("unknown LLVM dialect type");
+            }
+            return createdType; 
+          })
+          .Case([this](Float32Type) {
+            return builder.createBasicType("Float", 32, llvm::dwarf::DW_ATE_float); 
+          })
+          .Case([this](Float64Type) {
+            return builder.createBasicType("Double", 64, llvm::dwarf::DW_ATE_float);
+          })
+          .Case([this](LLVM::LLVMPointerType) {
+            return builder.createBasicType("Pointer", 64, llvm::dwarf::DW_ATE_address);
+          })
+          .Case(
+              [this](LLVM::LLVMStructType type) { 
+                SmallVector<llvm::DIType *, 8> subtypes;
+                translateDebugTypes(type.getBody(), subtypes);
+                llvm::DINodeArray elements=builder.getOrCreateArray(llvm::ArrayRef<llvm::Metadata*>((SmallVector<llvm::Metadata *, 8>&) subtypes));
+                auto structType=builder.createStructType(
+                        compileUnit, llvm::StringRef("data128"), currentFile, 0,
+                        0, 0, llvm::DINode::DIFlags::FlagPublic, nullptr,elements);
+                return structType;
+
+                })
+          .Case(
+              [this](LLVM::LLVMArrayType type) {
+                  llvm::SmallVector<llvm::Metadata *, 2> Subscripts;
+                //auto *ColumnCountNode =
+                //    llvm::ConstantAsMetadata::get(llvm::ConstantInt::getSigned(
+                //        llvm::Type::getInt64Ty(CGM.getLLVMContext()), Ty->getNumColumns()));
+                //auto *RowCountNode =
+                //    llvm::ConstantAsMetadata::get(llvm::ConstantInt::getSigned(
+                //        llvm::Type::getInt64Ty(CGM.getLLVMContext()), Ty->getNumRows()));
+                //Subscripts.push_back(DBuilder.getOrCreateSubrange(
+                //    ColumnCountNode /*count*/, nullptr /*lowerBound*/, nullptr /*upperBound*/,
+                //    nullptr /*stride*/));
+                //Subscripts.push_back(DBuilder.getOrCreateSubrange(
+                //    RowCountNode /*count*/, nullptr /*lowerBound*/, nullptr /*upperBound*/,
+                //    nullptr /*stride*/));
+                llvm::DINodeArray SubscriptArray = builder.getOrCreateArray(Subscripts);
+                return builder.createArrayType(type.getNumElements(), 0, translateDebugType(type.getElementType()), SubscriptArray); 
+
+                })
+          .Default([](Type t) -> llvm::DIType * {
+            llvm_unreachable("unknown LLVM dialect type");
+          });
+
+  // Cache the result of the conversion and return.
+  knownDebugTypeTranslations.try_emplace(type, translated);
+  return translated;
+}
+  /// Translates a list of types.
+  void DebugTranslation::translateDebugTypes(ArrayRef<Type> types,
+                      SmallVectorImpl<llvm::DIType *> &result) {
+    result.reserve(result.size() + types.size());
+    for (auto type : types)
+      result.push_back(translateDebugType(type));
+  }
+
+void DebugTranslation::mapValue(mlir::Value mlir, llvm::Value *llvm,llvm::IRBuilderBase &irbuilder){
+  auto definingOp=mlir.getDefiningOp();
+  if(!definingOp)return;
+  auto loc=definingOp->getLoc();
+  if(!currentFunc)return;
+  if(auto namedResultsLoc = loc.dyn_cast<NamedResultsLoc>()){
+    auto resultNames=namedResultsLoc.getResultNames();
+    auto idx=getIdx(definingOp,mlir);
+    auto resName=resultNames[idx].cast<mlir::StringAttr>().str();
+    resName="val_"+resName.substr(1,resName.size()-1);
+    llvm::DIType* type=translateDebugType(mlir.getType());
+    auto varDecl=builder.createAutoVariable(currentFunc, llvm::StringRef(resName.data(), resName.length()), currentFile, 1, type);
+    builder.insertDbgValueIntrinsic(llvm, varDecl, builder.createExpression(), irbuilder.getCurrentDebugLocation(), irbuilder.GetInsertBlock());
+  }
+}
+
 
 //===----------------------------------------------------------------------===//
 // Locations
@@ -165,6 +276,9 @@ DebugTranslation::translateLoc(Location loc, llvm::DILocalScope *scope,
 
   } else if (auto nameLoc = loc.dyn_cast<NameLoc>()) {
     llvmLoc = translateLoc(loc.cast<NameLoc>().getChildLoc(), scope, inlinedAt);
+
+  } else if (auto namedResultsLoc = loc.dyn_cast<NamedResultsLoc>()) {
+    llvmLoc = translateLoc(loc.cast<NamedResultsLoc>().getChildLoc(), scope, inlinedAt);
 
   } else if (auto opaqueLoc = loc.dyn_cast<OpaqueLoc>()) {
     llvmLoc = translateLoc(loc.cast<OpaqueLoc>().getFallbackLocation(), scope,

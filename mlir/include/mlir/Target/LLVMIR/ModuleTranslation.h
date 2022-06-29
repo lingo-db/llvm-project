@@ -42,6 +42,16 @@ class DebugTranslation;
 } // namespace detail
 
 class LLVMFuncOp;
+class ModuleTranslation;
+
+class HackyAsHell{
+  ModuleTranslation* t;
+  llvm::IRBuilderBase* builder;
+  mlir::Value v;
+  public:
+  void operator =(llvm::Value* ptr);
+  HackyAsHell(ModuleTranslation* t,llvm::IRBuilderBase* builder,mlir::Value v);
+};
 
 /// Implementation class for module translation. Holds a reference to the module
 /// being translated, and the mappings between the original and the translated
@@ -50,7 +60,7 @@ class LLVMFuncOp;
 /// needs to look up block and function mappings.
 class ModuleTranslation {
   friend std::unique_ptr<llvm::Module>
-  mlir::translateModuleToLLVMIR(Operation *, llvm::LLVMContext &, StringRef);
+  mlir::translateModuleToLLVMIR(Operation *, llvm::LLVMContext &, StringRef,LLVM::detail::DebuggingLevel debuggingLevel);
 
 public:
   /// Stores the mapping between a function name and its LLVM IR representation.
@@ -67,16 +77,15 @@ public:
   }
 
   /// Stores the mapping between an MLIR value and its LLVM IR counterpart.
-  void mapValue(Value mlir, llvm::Value *llvm) { mapValue(mlir) = llvm; }
+  void mapValue(Value mlir, llvm::Value *llvm) {
+        valueMapping[mlir] = llvm;
+  }
+
+  void mapValue(Value mlir, llvm::Value *llvm,llvm::IRBuilderBase &builder);
 
   /// Provides write-once access to store the LLVM IR value corresponding to the
   /// given MLIR value.
-  llvm::Value *&mapValue(Value value) {
-    llvm::Value *&llvm = valueMapping[value];
-    assert(llvm == nullptr &&
-           "attempting to map a value that is already mapped");
-    return llvm;
-  }
+  HackyAsHell mapValue(Value value,llvm::IRBuilderBase &builder);
 
   /// Finds an LLVM IR value corresponding to the given MLIR value.
   llvm::Value *lookupValue(Value value) const {
@@ -266,7 +275,7 @@ public:
 
 private:
   ModuleTranslation(Operation *module,
-                    std::unique_ptr<llvm::Module> llvmModule);
+                    std::unique_ptr<llvm::Module> llvmModule,detail::DebuggingLevel debuggingLevel=detail::DebuggingLevel::LINES);
   ~ModuleTranslation();
 
   /// Converts individual components.
@@ -292,6 +301,8 @@ private:
   std::unique_ptr<llvm::Module> llvmModule;
   /// A converter for translating debug information.
   std::unique_ptr<detail::DebugTranslation> debugTranslation;
+  //how much debugging info should be available?
+  detail::DebuggingLevel debuggingLevel;
 
   /// Builder for LLVM IR generation of OpenMP constructs.
   std::unique_ptr<llvm::OpenMPIRBuilder> ompBuilder;

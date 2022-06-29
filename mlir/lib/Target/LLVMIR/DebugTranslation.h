@@ -15,15 +15,24 @@
 #define MLIR_LIB_TARGET_LLVMIR_DEBUGTRANSLATION_H_
 
 #include "mlir/IR/Location.h"
+#include "mlir/IR/Value.h"
+#include "mlir/Target/LLVMIR/TypeToLLVM.h"
+
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/IR/DIBuilder.h"
+
+namespace llvm {
+class IRBuilderBase;
+
+} // namespace llvm
 
 namespace mlir {
 class Operation;
 
 namespace LLVM {
 class LLVMFuncOp;
+
 
 namespace detail {
 class DebugTranslation {
@@ -39,7 +48,12 @@ public:
   /// Translate the debug information for the given function.
   void translate(LLVMFuncOp func, llvm::Function &llvmFunc);
 
+  void mapValue(Value mlir, llvm::Value *llvm,llvm::IRBuilderBase &builder);
+
 private:
+  llvm::DIType* translateDebugType(Type type);
+  void translateDebugTypes(ArrayRef<Type> types,
+                      SmallVectorImpl<llvm::DIType *> &result);
   /// Translate the given location to an llvm debug location with the given
   /// scope and inlinedAt parameters.
   const llvm::DILocation *translateLoc(Location loc, llvm::DILocalScope *scope,
@@ -53,6 +67,8 @@ private:
   DenseMap<std::pair<Location, llvm::DILocalScope *>, const llvm::DILocation *>
       locationToLoc;
 
+  llvm::DenseMap<Type, llvm::DIType *> knownDebugTypeTranslations;
+
   /// A mapping between filename and llvm debug file.
   /// TODO: Change this to DenseMap<Identifier, ...> when we can
   /// access the Identifier filename in FileLineColLoc.
@@ -65,6 +81,8 @@ private:
   llvm::DIBuilder builder;
   llvm::LLVMContext &llvmCtx;
   llvm::DICompileUnit *compileUnit;
+  llvm::DISubprogram *currentFunc;
+  llvm::DIFile* currentFile;
 };
 
 } // namespace detail

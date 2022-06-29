@@ -294,7 +294,7 @@ convertOperationImpl(Operation &opInst, llvm::IRBuilderBase &builder,
   if (isa<LLVM::CallOp>(opInst)) {
     llvm::Value *result = convertCall(opInst);
     if (opInst.getNumResults() != 0) {
-      moduleTranslation.mapValue(opInst.getResult(0), result);
+      moduleTranslation.mapValue(opInst.getResult(0), result,builder);
       return success();
     }
     // Check that LLVM call returns void for 0-result functions.
@@ -355,7 +355,7 @@ convertOperationImpl(Operation &opInst, llvm::IRBuilderBase &builder,
     }
 
     if (opInst.getNumResults() != 0)
-      moduleTranslation.mapValue(opInst.getResult(0), inst);
+            moduleTranslation.mapValue(opInst.getResult(0), inst,builder);
     return success();
   }
 
@@ -382,7 +382,7 @@ convertOperationImpl(Operation &opInst, llvm::IRBuilderBase &builder,
     moduleTranslation.mapBranch(invOp, result);
     // InvokeOp can only have 0 or 1 result
     if (invOp->getNumResults() != 0) {
-      moduleTranslation.mapValue(opInst.getResult(0), result);
+      moduleTranslation.mapValue(opInst.getResult(0), result,builder);
       return success();
     }
     return success(result->getType()->isVoidTy());
@@ -401,7 +401,7 @@ convertOperationImpl(Operation &opInst, llvm::IRBuilderBase &builder,
       if (auto *constOperand = dyn_cast<llvm::Constant>(operand))
         lpi->addClause(constOperand);
     }
-    moduleTranslation.mapValue(lpOp.getResult(), lpi);
+    moduleTranslation.mapValue(lpOp.getResult(), lpi,builder);
     return success();
   }
 
@@ -477,7 +477,7 @@ convertOperationImpl(Operation &opInst, llvm::IRBuilderBase &builder,
     moduleTranslation.mapValue(
         addressOfOp.getResult(),
         global ? moduleTranslation.lookupGlobal(global)
-               : moduleTranslation.lookupFunction(function.getName()));
+               : moduleTranslation.lookupFunction(function.getName()),builder);
     return success();
   }
 

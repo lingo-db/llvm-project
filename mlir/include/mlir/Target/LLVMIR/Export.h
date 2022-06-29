@@ -18,6 +18,13 @@ class Module;
 } // namespace llvm
 
 namespace mlir {
+    namespace LLVM{
+        namespace detail{
+            enum class DebuggingLevel{
+                OFF=0, LINES=1, VARIABLES=2
+            };
+        } //namespace detail
+    } // namespace LLVM
 class Operation;
 
 /// Translate operation that satisfies LLVM dialect module requirements into an
@@ -26,7 +33,7 @@ class Operation;
 /// LLVMTranslationDialectInterface.
 std::unique_ptr<llvm::Module>
 translateModuleToLLVMIR(Operation *module, llvm::LLVMContext &llvmContext,
-                        llvm::StringRef name = "LLVMDialectModule");
+                        llvm::StringRef name = "LLVMDialectModule",LLVM::detail::DebuggingLevel debuggingLevel=LLVM::detail::DebuggingLevel::LINES);
 } // namespace mlir
 
 #endif // MLIR_TARGET_LLVMIR_EXPORT_H

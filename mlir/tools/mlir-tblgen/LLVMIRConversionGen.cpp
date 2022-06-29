@@ -135,7 +135,7 @@ static bool emitOneBuilder(const Record &record, raw_ostream &os) {
     } else if (isAttributeName(op, name)) {
       bs << formatv("op.{0}()", getterName);
     } else if (isResultName(op, name)) {
-      bs << formatv("moduleTranslation.mapValue(op.{0}())", getterName);
+      bs << formatv("moduleTranslation.mapValue(op.{0}(),builder)", getterName);
     } else if (name == "_resultType") {
       bs << "moduleTranslation.convertType(op.getResult().getType())";
     } else if (name == "_hasResult") {

@@ -18,6 +18,7 @@
 #include <numeric>
 
 using namespace mlir;
+std::function<Location(Location)> Operation::tagLocationHook=std::function<Location(Location)>();
 
 //===----------------------------------------------------------------------===//
 // Operation
@@ -86,6 +87,10 @@ Operation *Operation::create(Location location, OperationName name,
       alignof(Operation));
   char *mallocMem = reinterpret_cast<char *>(malloc(byteSize + prefixByteSize));
   void *rawMem = mallocMem + prefixByteSize;
+
+  if(tagLocationHook){
+    location = tagLocationHook(location);
+  }
 
   // Create the new Operation.
   Operation *op =

@@ -1501,6 +1501,13 @@ void AsmPrinter::Impl::printLocationInternal(LocationAttr loc, bool pretty) {
           os << ')';
         }
       })
+      .Case<NamedResultsLoc>([&](NamedResultsLoc loc) {
+        // Print the child if it isn't unknown.
+        auto childLoc = loc.getChildLoc();
+        if (!childLoc.isa<UnknownLoc>()) {
+          printLocationInternal(childLoc, pretty);
+        }
+      })
       .Case<CallSiteLoc>([&](CallSiteLoc loc) {
         Location caller = loc.getCaller();
         Location callee = loc.getCallee();
