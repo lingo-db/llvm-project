@@ -2496,13 +2496,15 @@ OperationConverter::finalize(ConversionPatternRewriter &rewriter) {
        i != e; ++i) {
     unsigned replIdx = rewriterImpl.operationsWithChangedResults[i];
     auto &repl = *(rewriterImpl.replacements.begin() + replIdx);
-    for (OpResult result : repl.first->getResults()) {
+    auto* replFirst=repl.first;
+    OpReplacement replSecond=repl.second;
+    for (OpResult result : replFirst->getResults()) {
       Value newValue = rewriterImpl.mapping.lookupOrNull(result);
 
       // If the operation result was replaced with null, all of the uses of this
       // value should be replaced.
       if (!newValue) {
-        if (failed(legalizeErasedResult(repl.first, result, rewriterImpl)))
+        if (failed(legalizeErasedResult(replFirst, result, rewriterImpl)))
           return failure();
         continue;
       }
@@ -2516,9 +2518,9 @@ OperationConverter::finalize(ConversionPatternRewriter &rewriter) {
         inverseMapping = rewriterImpl.mapping.getInverse();
 
       // Legalize this result.
-      rewriter.setInsertionPoint(repl.first);
-      if (failed(legalizeChangedResultType(repl.first, result, newValue,
-                                           repl.second.converter, rewriter,
+      rewriter.setInsertionPoint(replFirst);
+      if (failed(legalizeChangedResultType(replFirst, result, newValue,
+                                           replSecond.converter, rewriter,
                                            rewriterImpl, *inverseMapping)))
         return failure();
 
