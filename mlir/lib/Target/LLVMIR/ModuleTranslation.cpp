@@ -682,10 +682,10 @@ llvm::Constant *mlir::LLVM::detail::getLLVMConstant(
 }
 
 ModuleTranslation::ModuleTranslation(Operation *module,
-                                     std::unique_ptr<llvm::Module> llvmModule)
+                                     std::unique_ptr<llvm::Module> llvmModule,bool withDebugInfo)
     : mlirModule(module), llvmModule(std::move(llvmModule)),
       debugTranslation(
-          std::make_unique<DebugTranslation>(module, *this->llvmModule)),
+          std::make_unique<DebugTranslation>(module, *this->llvmModule)),withDebugInfo(withDebugInfo),
       loopAnnotationTranslation(std::make_unique<LoopAnnotationTranslation>(
           *this, *this->llvmModule)),
       typeTranslator(this->llvmModule->getContext()),
@@ -921,8 +921,10 @@ LogicalResult ModuleTranslation::convertBlockImpl(Block &bb,
   // Traverse operations.
   for (auto &op : bb) {
     // Set the current debug location within the builder.
-    builder.SetCurrentDebugLocation(
+    if(withDebugInfo){
+      builder.SetCurrentDebugLocation(
         debugTranslation->translateLoc(op.getLoc(), subprogram));
+    }
 
     if (failed(convertOperation(op, builder, recordInsertions)))
       return failure();
@@ -1460,7 +1462,9 @@ LogicalResult ModuleTranslation::convertFunctionSignatures() {
       llvmFunc->setAlignment(llvm::MaybeAlign(*alignment));
 
     // Translate the debug information for this function.
-    debugTranslation->translate(function, *llvmFunc);
+    if(withDebugInfo){
+      debugTranslation->translate(function, *llvmFunc);
+    }
   }
 
   return success();
@@ -1703,7 +1707,11 @@ llvm::OpenMPIRBuilder *ModuleTranslation::getOpenMPBuilder() {
 
 llvm::DILocation *ModuleTranslation::translateLoc(Location loc,
                                                   llvm::DILocalScope *scope) {
-  return debugTranslation->translateLoc(loc, scope);
+    if(withDebugInfo){
+      return debugTranslation->translateLoc(loc, scope);
+    }else{
+      return nullptr;
+    }
 }
 
 llvm::DIExpression *
@@ -1771,8 +1779,7 @@ prepareLLVMModule(Operation *m, llvm::LLVMContext &llvmContext,
 }
 
 std::unique_ptr<llvm::Module>
-mlir::translateModuleToLLVMIR(Operation *module, llvm::LLVMContext &llvmContext,
-                              StringRef name) {
+mlir::translateModuleToLLVMIR(Operation *module, llvm::LLVMContext &llvmContext,StringRef name, bool withDebugInfo) {
   if (!satisfiesLLVMModule(module)) {
     module->emitOpError("can not be translated to an LLVMIR module");
     return nullptr;
@@ -1786,7 +1793,7 @@ mlir::translateModuleToLLVMIR(Operation *module, llvm::LLVMContext &llvmContext,
   LLVM::ensureDistinctSuccessors(module);
   LLVM::legalizeDIExpressionsRecursively(module);
 
-  ModuleTranslation translator(module, std::move(llvmModule));
+  ModuleTranslation translator(module, std::move(llvmModule),withDebugInfo);
   llvm::IRBuilder<> llvmBuilder(llvmContext);
 
   // Convert module before functions and operations inside, so dialect
