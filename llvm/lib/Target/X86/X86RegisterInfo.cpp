@@ -51,6 +51,10 @@ static cl::opt<bool>
                             cl::init(false),
                             cl::desc("Disable two address hints for register "
                                      "allocation"));
+bool reserveLastRegister;
+static cl::opt<bool,true>
+ReserveLastRegister("x86-reserve-last-register", cl::Hidden,
+          cl::desc("Reserve last x86 gp register for other purposes"), cl::location(reserveLastRegister),cl::init(false));
 
 X86RegisterInfo::X86RegisterInfo(const Triple &TT)
     : X86GenRegisterInfo((TT.isArch64Bit() ? X86::RIP : X86::EIP),
@@ -558,7 +562,10 @@ BitVector X86RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   // Set the instruction pointer register and its aliases as reserved.
   for (const MCPhysReg &SubReg : subregs_inclusive(X86::RIP))
     Reserved.set(SubReg);
-
+  if(reserveLastRegister){
+    for (const MCPhysReg &SubReg : subregs_inclusive(X86::R15))
+      Reserved.set(SubReg);
+  }
   // Set the frame-pointer register and its aliases as reserved if needed.
   if (TFI->hasFP(MF)) {
     if (MF.getInfo<X86MachineFunctionInfo>()->getFPClobberedByInvoke())
