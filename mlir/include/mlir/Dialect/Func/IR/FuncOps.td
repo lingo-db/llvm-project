@@ -36,7 +36,7 @@ class Func_Op<string mnemonic, list<Trait> traits = []> :
 
 def CallOp : Func_Op<"call",
     [CallOpInterface, MemRefsNormalizable,
-     DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+     DeclareOpInterfaceMethods<SymbolUserOpInterface>,DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "call operation";
   let description = [{
     The `func.call` operation represents a direct call to a function that is
