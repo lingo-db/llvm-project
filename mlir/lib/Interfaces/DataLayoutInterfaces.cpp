@@ -114,7 +114,7 @@ getIntegerTypeABIAlignment(IntegerType intType,
   if (params.empty()) {
     return intType.getWidth() < 64
                ? llvm::PowerOf2Ceil(llvm::divideCeil(intType.getWidth(), 8))
-               : 4;
+               : 8;
   }
 
   return extractABIAlignment(findEntryForIntegerType(intType, params));
