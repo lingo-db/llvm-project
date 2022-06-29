@@ -247,7 +247,7 @@ ExecutionEngine::create(ModuleOp m, const ExecutionEngineOptions &options) {
   // instead of this.  Currently, the LLVM module created above has no triple
   // associated with it.
   setupTargetTriple(llvmModule.get());
-  packFunctionArguments(llvmModule.get());
+  //packFunctionArguments(llvmModule.get());
 
   auto dataLayout = llvmModule->getDataLayout();
 
