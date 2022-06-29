@@ -92,6 +92,22 @@ LogicalResult CallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
+void CallOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+    auto interface=mlir::cast<mlir::CallOpInterface>(getOperation());
+    auto callable=interface.resolveCallable();
+    bool isConstFn=false;
+    if(callable){
+      if(auto funcOp=mlir::dyn_cast_or_null<mlir::func::FuncOp>(callable)){
+        isConstFn=funcOp->hasAttr("const");
+      }
+    }
+    if(!isConstFn){
+    effects.emplace_back(MemoryEffects::Write::get());
+    effects.emplace_back(MemoryEffects::Read::get());
+    }
+}
 FunctionType CallOp::getCalleeType() {
   return FunctionType::get(getContext(), getOperandTypes(), getResultTypes());
 }
