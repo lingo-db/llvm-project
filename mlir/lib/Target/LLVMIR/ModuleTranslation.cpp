@@ -404,10 +404,10 @@ llvm::Constant *mlir::LLVM::detail::getLLVMConstant(
 }
 
 ModuleTranslation::ModuleTranslation(Operation *module,
-                                     std::unique_ptr<llvm::Module> llvmModule)
+                                     std::unique_ptr<llvm::Module> llvmModule,bool withDebugInfo)
     : mlirModule(module), llvmModule(std::move(llvmModule)),
       debugTranslation(
-          std::make_unique<DebugTranslation>(module, *this->llvmModule)),
+          std::make_unique<DebugTranslation>(module, *this->llvmModule)),withDebugInfo(withDebugInfo),
       typeTranslator(this->llvmModule->getContext()),
       iface(module->getContext()) {
   assert(satisfiesLLVMModule(mlirModule) &&
@@ -606,8 +606,10 @@ LogicalResult ModuleTranslation::convertBlock(Block &bb, bool ignoreArguments,
   // Traverse operations.
   for (auto &op : bb) {
     // Set the current debug location within the builder.
-    builder.SetCurrentDebugLocation(
+    if(withDebugInfo){
+      builder.SetCurrentDebugLocation(
         debugTranslation->translateLoc(op.getLoc(), subprogram));
+    }
 
     if (failed(convertOperation(op, builder)))
       return failure();
@@ -823,7 +825,9 @@ LogicalResult ModuleTranslation::convertOneFunction(LLVMFuncOp func) {
   llvm::Function *llvmFunc = lookupFunction(func.getName());
 
   // Translate the debug information for this function.
-  debugTranslation->translate(func, *llvmFunc);
+  if(withDebugInfo){
+    debugTranslation->translate(func, *llvmFunc);
+  }
 
   // Add function arguments to the value remapping table.
   for (auto [mlirArg, llvmArg] :
@@ -1156,7 +1160,11 @@ SmallVector<llvm::Value *> ModuleTranslation::lookupValues(ValueRange values) {
 
 const llvm::DILocation *
 ModuleTranslation::translateLoc(Location loc, llvm::DILocalScope *scope) {
-  return debugTranslation->translateLoc(loc, scope);
+    if(withDebugInfo){
+      return debugTranslation->translateLoc(loc, scope);
+    }else{
+      return nullptr;
+    }
 }
 
 llvm::Metadata *ModuleTranslation::translateDebugInfo(LLVM::DINodeAttr attr) {
@@ -1211,8 +1219,7 @@ prepareLLVMModule(Operation *m, llvm::LLVMContext &llvmContext,
 }
 
 std::unique_ptr<llvm::Module>
-mlir::translateModuleToLLVMIR(Operation *module, llvm::LLVMContext &llvmContext,
-                              StringRef name) {
+mlir::translateModuleToLLVMIR(Operation *module, llvm::LLVMContext &llvmContext,StringRef name, bool withDebugInfo) {
   if (!satisfiesLLVMModule(module)) {
     module->emitOpError("can not be translated to an LLVMIR module");
     return nullptr;
@@ -1225,7 +1232,7 @@ mlir::translateModuleToLLVMIR(Operation *module, llvm::LLVMContext &llvmContext,
 
   LLVM::ensureDistinctSuccessors(module);
 
-  ModuleTranslation translator(module, std::move(llvmModule));
+  ModuleTranslation translator(module, std::move(llvmModule),withDebugInfo);
   if (failed(translator.convertFunctionSignatures()))
     return nullptr;
   if (failed(translator.convertGlobals()))

@@ -52,7 +52,7 @@ class LLVMFuncOp;
 /// needs to look up block and function mappings.
 class ModuleTranslation {
   friend std::unique_ptr<llvm::Module>
-  mlir::translateModuleToLLVMIR(Operation *, llvm::LLVMContext &, StringRef);
+  mlir::translateModuleToLLVMIR(Operation *, llvm::LLVMContext &, StringRef, bool withDebugInfo);
 
 public:
   /// Stores the mapping between a function name and its LLVM IR representation.
@@ -273,7 +273,7 @@ public:
 
 private:
   ModuleTranslation(Operation *module,
-                    std::unique_ptr<llvm::Module> llvmModule);
+                    std::unique_ptr<llvm::Module> llvmModule, bool withDebugInfo);
   ~ModuleTranslation();
 
   /// Converts individual components.
@@ -299,6 +299,8 @@ private:
   std::unique_ptr<llvm::Module> llvmModule;
   /// A converter for translating debug information.
   std::unique_ptr<detail::DebugTranslation> debugTranslation;
+  //how much debugging info should be available?
+  bool withDebugInfo;
 
   /// Builder for LLVM IR generation of OpenMP constructs.
   std::unique_ptr<llvm::OpenMPIRBuilder> ompBuilder;

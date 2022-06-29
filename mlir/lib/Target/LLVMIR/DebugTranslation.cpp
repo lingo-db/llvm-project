@@ -73,8 +73,8 @@ void DebugTranslation::translate(LLVMFuncOp func, llvm::Function &llvmFunc) {
             });
           })
           .wasInterrupted();
-  if (hasCallWithoutDebugInfo)
-    return;
+  //if (hasCallWithoutDebugInfo)
+  //  return;
 
   // Look for a sub program attached to the function.
   auto spLoc =
