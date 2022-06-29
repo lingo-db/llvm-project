@@ -268,7 +268,7 @@ ExecutionEngine::create(Operation *m, const ExecutionEngineOptions &options,
   // (set-up by callers of this method). It could also be passed to the
   // translation or dialect conversion instead of this.
   setupTargetTripleAndDataLayout(llvmModule.get(), tm.get());
-  packFunctionArguments(llvmModule.get());
+  //packFunctionArguments(llvmModule.get());
 
   auto dataLayout = llvmModule->getDataLayout();
 
