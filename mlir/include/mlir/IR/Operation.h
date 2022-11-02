@@ -29,11 +29,18 @@ class alignas(8) Operation final
     : public llvm::ilist_node_with_parent<Operation, Block>,
       private llvm::TrailingObjects<Operation, detail::OperandStorage,
                                     BlockOperand, Region, OpOperand> {
-    static std::function<Location(Location)> tagLocationHook;
+  static std::function<Location(Location)> & getTagLocationHookSingleton(){
+    static std::function<Location(Location)> tagLocationHook = std::function<Location(Location)>();
+    return tagLocationHook;
+  }
 public:
   static void setTagLocationHook(std::function<Location(Location)> hook){
-    tagLocationHook=hook;
+    getTagLocationHookSingleton() = hook;
   }
+  static std::function<Location(Location)> getTagLocationHook(){
+    return getTagLocationHookSingleton();
+  }
+
   /// Create a new Operation with the specific fields.
   static Operation *create(Location location, OperationName name,
                            TypeRange resultTypes, ValueRange operands,
