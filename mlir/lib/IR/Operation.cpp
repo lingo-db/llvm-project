@@ -17,8 +17,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include <numeric>
 
-using namespace mlir;
-std::function<Location(Location)> Operation::tagLocationHook=std::function<Location(Location)>();
+using namespace mlir;;
 
 //===----------------------------------------------------------------------===//
 // Operation
@@ -88,8 +87,8 @@ Operation *Operation::create(Location location, OperationName name,
   char *mallocMem = reinterpret_cast<char *>(malloc(byteSize + prefixByteSize));
   void *rawMem = mallocMem + prefixByteSize;
 
-  if(tagLocationHook){
-    location = tagLocationHook(location);
+  if(getTagLocationHook()){
+    location = getTagLocationHook()(location);
   }
 
   // Create the new Operation.
