@@ -24,6 +24,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FormatVariadic.h"
 #include <utility>
+#include <regex>
 
 #define DEBUG_TYPE "translate-to-cpp"
 
@@ -396,6 +397,27 @@ static LogicalResult printOperation(CppEmitter &emitter, emitc::CastOp castOp) {
     return failure();
   os << ") ";
   os << emitter.getOrCreateName(castOp.getOperand());
+
+  return success();
+}
+
+static LogicalResult printOperation(CppEmitter &emitter, emitc::GenericOp genericOp) {
+  raw_ostream &os = emitter.ostream();
+  Operation &op = *genericOp.getOperation();
+
+  if (failed(emitter.emitAssignPrefix(op)))
+    return failure();
+
+  std::string formatString(genericOp.getFormatString().begin(),
+                           genericOp.getFormatString().end());
+  size_t numOperands = genericOp->getNumOperands();
+
+  for (size_t i=0; i<numOperands; ++i){
+    std::regex toReplace("@" + std::to_string(i));
+    std::string operand{emitter.getOrCreateName(op.getOperand(i))};
+    formatString = std::regex_replace(formatString, toReplace, operand);
+  }
+  os << formatString;
 
   return success();
 }
@@ -935,7 +957,7 @@ LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
               [&](auto op) { return printOperation(*this, op); })
           // EmitC ops.
           .Case<emitc::ApplyOp, emitc::CallOp, emitc::CastOp, emitc::ConstantOp,
-                emitc::IncludeOp, emitc::VariableOp>(
+                emitc::IncludeOp, emitc::VariableOp, emitc::GenericOp>(
               [&](auto op) { return printOperation(*this, op); })
           // Func ops.
           .Case<func::CallOp, func::ConstantOp, func::FuncOp, func::ReturnOp>(

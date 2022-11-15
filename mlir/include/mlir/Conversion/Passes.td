@@ -110,6 +110,23 @@ def ArithToLLVMConversionPass : Pass<"convert-arith-to-llvm"> {
 }
 
 //===----------------------------------------------------------------------===//
+// ArithToEmitC
+//===----------------------------------------------------------------------===//
+
+def ArithToEmitCConversionPass : Pass<"convert-arith-to-emitc"> {
+  let summary = "Convert Arith dialect to EmitC dialect";
+  let description = [{
+      This pass converts supported Arith ops to EmitC dialect instructions.
+  }];
+  let dependentDialects = ["emitc::EmitCDialect"];
+  let options = [
+    Option<"indexBitwidth", "index-bitwidth", "unsigned",
+           /*default=kDeriveIndexBitwidthFromDataLayout*/"0",
+           "Bitwidth of the index type, 0 to use size of machine word">,
+  ];
+}
+
+//===----------------------------------------------------------------------===//
 // ArithToSPIRV
 //===----------------------------------------------------------------------===//
 

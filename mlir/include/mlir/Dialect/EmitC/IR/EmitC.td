@@ -57,6 +57,29 @@ def EmitC_ApplyOp : EmitC_Op<"apply", []> {
   let hasVerifier = 1;
 }
 
+def EmitC_GenericOp : EmitC_Op<"generic", []> {
+  let summary = "Generic operation";
+  let description = [{
+    With the `binOp` operation the binary arithmetic operators can be applied to
+                                                              2 operators
+
+    Example:
+
+    ```mlir
+         // Custom form of applying the + operator to two operands.
+         %0 = emitc.generic "@1 + @2" %arg0, %arg1 : i32, i32 -> i32
+    ```
+  }];
+  let arguments = (ins
+                      Arg<StrAttr, "the format string">:$formatString,
+                     Variadic<AnyType>:$operands
+  );
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $formatString  $operands attr-dict `:` type($operands) `->` type($result)
+  }];
+}
+
 def EmitC_CallOp : EmitC_Op<"call", []> {
   let summary = "Call operation";
   let description = [{
