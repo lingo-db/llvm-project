@@ -104,12 +104,12 @@ def InferTypeOpInterface : OpInterface<"InferTypeOpInterface"> {
       /*methodName=*/"isCompatibleReturnTypes",
       /*args=*/(ins "::mlir::TypeRange":$lhs, "::mlir::TypeRange":$rhs),
       /*methodBody=*/[{
-        return ConcreteOp::isCompatibleReturnTypes(lhs, rhs);
+        return ConcreteOp::isCompatibleReturnTypes(lhs, rhs); //NOLINT(clang-diagnostic-ambiguous-reversed-operator)
       }],
       /*defaultImplementation=*/[{
         /// Returns whether two arrays are equal as strongest check for
         /// compatibility by default.
-        return lhs == rhs;
+        return lhs == rhs; //NOLINT(clang-diagnostic-ambiguous-reversed-operator)
       }]
     >,
   ];
