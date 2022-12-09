@@ -23,8 +23,10 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FormatVariadic.h"
-#include <utility>
 #include <regex>
+#include <utility>
+
+#include <unordered_set>
 
 #define DEBUG_TYPE "translate-to-cpp"
 
@@ -66,6 +68,12 @@ inline LogicalResult interleaveCommaWithError(const Container &c,
                                               UnaryFunctor eachFn) {
   return interleaveWithError(c.begin(), c.end(), eachFn, [&]() { os << ", "; });
 }
+template <typename Container, typename UnaryFunctor>
+inline LogicalResult interleaveSemicolonWithError(const Container &c,
+                                                  raw_ostream &os,
+                                                  UnaryFunctor eachFn) {
+  return interleaveWithError(c.begin(), c.end(), eachFn, [&]() { os << "; "; });
+}
 
 namespace {
 /// Emitter that uses dialect specific emitters to emit C++ code.
@@ -79,17 +87,28 @@ struct CppEmitter {
   LogicalResult emitOperation(Operation &op, bool trailingSemicolon);
 
   /// Emits type 'type' or returns failure.
-  LogicalResult emitType(Location loc, Type type);
+  LogicalResult emitType(Location loc, Type type, llvm::raw_ostream &os);
+  LogicalResult emitType(Location loc, Type type) {
+    return emitType(loc, type, os);
+  }
 
   /// Emits array of types as a std::tuple of the emitted types.
   /// - emits void for an empty array;
   /// - emits the type of the only element for arrays of size one;
   /// - emits a std::tuple otherwise;
-  LogicalResult emitTypes(Location loc, ArrayRef<Type> types);
+  LogicalResult emitTypes(Location loc, ArrayRef<Type> types,
+                          llvm::raw_ostream &os);
+  LogicalResult emitTypes(Location loc, ArrayRef<Type> types) {
+    return emitTypes(loc, types, os);
+  }
 
   /// Emits array of types as a std::tuple of the emitted types independently of
   /// the array size.
-  LogicalResult emitTupleType(Location loc, ArrayRef<Type> types);
+  LogicalResult emitTupleType(Location loc, ArrayRef<Type> types,
+                              llvm::raw_ostream &os);
+  LogicalResult emitTupleType(Location loc, ArrayRef<Type> types) {
+    return emitTupleType(loc, types, os);
+  }
 
   /// Emits an assignment for a variable which has been declared previously.
   LogicalResult emitVariableAssignment(OpResult result);
@@ -157,6 +176,7 @@ struct CppEmitter {
   /// Returns if all variables for op results and basic block arguments need to
   /// be declared at the beginning of a function.
   bool shouldDeclareVariablesAtTop() { return declareVariablesAtTop; };
+  std::string &getStructDefs() { return structDefs; }
 
 private:
   using ValueMapper = llvm::ScopedHashTable<Value, std::string>;
@@ -180,6 +200,8 @@ private:
   /// names of values in a scope.
   std::stack<int64_t> valueInScopeCount;
   std::stack<int64_t> labelInScopeCount;
+  std::string structDefs;
+  std::unordered_set<std::string> cachedStructs;
 };
 } // namespace
 
@@ -401,7 +423,8 @@ static LogicalResult printOperation(CppEmitter &emitter, emitc::CastOp castOp) {
   return success();
 }
 
-static LogicalResult printOperation(CppEmitter &emitter, emitc::GenericOp genericOp) {
+static LogicalResult printOperation(CppEmitter &emitter,
+                                    emitc::GenericOp genericOp) {
   raw_ostream &os = emitter.ostream();
   Operation &op = *genericOp.getOperation();
 
@@ -412,7 +435,7 @@ static LogicalResult printOperation(CppEmitter &emitter, emitc::GenericOp generi
                            genericOp.getFormatString().end());
   size_t numOperands = genericOp->getNumOperands();
 
-  for (size_t i=0; i<numOperands; ++i){
+  for (size_t i = 0; i < numOperands; ++i) {
     std::regex toReplace("@" + std::to_string(i));
     std::string operand{emitter.getOrCreateName(op.getOperand(i))};
     formatString = std::regex_replace(formatString, toReplace, operand);
@@ -509,6 +532,87 @@ static LogicalResult printOperation(CppEmitter &emitter, scf::ForOp forOp) {
        << emitter.getOrCreateName(result) << " = "
        << emitter.getOrCreateName(iterArg) << ";";
   }
+
+  return success();
+}
+
+static LogicalResult printOperation(CppEmitter &emitter, scf::WhileOp whileOp) {
+  raw_indented_ostream &os = emitter.ostream();
+
+  OperandRange operands = whileOp->getOperands();
+  Block::BlockArgListType beforeArgs = whileOp.getBeforeArguments();
+  Block::BlockArgListType afterArgs = whileOp.getAfterArguments();
+  Operation::result_range results = whileOp.getResults();
+
+  if (!emitter.shouldDeclareVariablesAtTop()) {
+    for (OpResult result : results) {
+      if (failed(emitter.emitVariableDeclaration(result,
+                                                 /*trailingSemicolon=*/true)))
+        return failure();
+    }
+  }
+
+  for (auto pair : llvm::zip(beforeArgs, operands)) {
+    if (failed(emitter.emitType(whileOp.getLoc(), std::get<0>(pair).getType())))
+      return failure();
+    os << " " << emitter.getOrCreateName(std::get<0>(pair)) << " = ";
+    os << emitter.getOrCreateName(std::get<1>(pair)) << ";";
+    os << "\n";
+  }
+
+  os << "while(true){\n";
+  os.indent();
+  Region &beforeRegion = whileOp.getBefore();
+  Region &afterRegion = whileOp.getAfter();
+  auto beforeRegionOps = beforeRegion.getOps();
+  auto afterRegionOps = afterRegion.getOps();
+
+  // We skip the trailing yield op because this updates the result variables
+  // of the for op in the generated code. Instead we update the iterArgs at
+  // the end of a loop iteration and set the result variables after the for
+  // loop.
+  for (auto it = beforeRegionOps.begin();
+       std::next(it) != beforeRegionOps.end(); ++it) {
+    if (failed(emitter.emitOperation(*it, /*trailingSemicolon=*/true)))
+      return failure();
+  }
+
+  auto conditionOp = mlir::cast<mlir::scf::ConditionOp>(
+      beforeRegion.getBlocks().front().getTerminator());
+  // Copy yield operands into iterArgs at the end of a loop iteration.
+  for (auto pair : llvm::zip(afterArgs, conditionOp.getArgs())) {
+    BlockArgument iterArg = std::get<0>(pair);
+    Value operand = std::get<1>(pair);
+    if (failed(emitter.emitType(whileOp.getLoc(), iterArg.getType())))
+      return failure();
+    os << " " << emitter.getOrCreateName(iterArg) << " = "
+       << emitter.getOrCreateName(operand) << ";\n";
+  }
+  for (auto pair : llvm::zip(results, conditionOp.getArgs())) {
+    OpResult result = std::get<0>(pair);
+    Value operand = std::get<1>(pair);
+    os << "\n"
+       << emitter.getOrCreateName(result) << " = "
+       << emitter.getOrCreateName(operand) << ";";
+  }
+  os << " if(!" << emitter.getOrCreateName(conditionOp.getCondition())
+     << "){ break; }\n";
+  for (auto it = afterRegionOps.begin(); std::next(it) != afterRegionOps.end();
+       ++it) {
+    if (failed(emitter.emitOperation(*it, /*trailingSemicolon=*/true)))
+      return failure();
+  }
+  auto yieldOp = mlir::cast<mlir::scf::YieldOp>(
+      afterRegion.getBlocks().front().getTerminator());
+
+  for (auto pair : llvm::zip(beforeArgs, yieldOp.getResults())) {
+    BlockArgument iterArg = std::get<0>(pair);
+    Value operand = std::get<1>(pair);
+    os << emitter.getOrCreateName(iterArg) << " = "
+       << emitter.getOrCreateName(operand) << ";\n";
+  }
+
+  os.unindent() << "}";
 
   return success();
 }
@@ -616,6 +720,30 @@ static LogicalResult printOperation(CppEmitter &emitter, ModuleOp moduleOp) {
 
 static LogicalResult printOperation(CppEmitter &emitter,
                                     func::FuncOp functionOp) {
+  if (functionOp.getFunctionBody().empty()) {
+
+    raw_indented_ostream &os = emitter.ostream();
+
+    if (failed(emitter.emitTypes(functionOp.getLoc(),
+                                 functionOp.getFunctionType().getResults())))
+      return failure();
+    os << " " << functionOp.getName();
+    os << "(";
+    if (failed(interleaveCommaWithError(
+            functionOp.getFunctionType().getInputs(), os,
+            [&](mlir::Type argType) -> LogicalResult {
+              if (failed(emitter.emitType(functionOp.getLoc(), argType)))
+                return failure();
+              return success();
+            })))
+      return failure();
+    os << ")";
+    // if (functionOp.getName().starts_with("_Z")) {
+    os << "asm(\"" << functionOp.getName() << "\")";
+    //}
+    os << ";";
+    return success();
+  }
   // We need to declare variables at top if the function has multiple blocks.
   if (!emitter.shouldDeclareVariablesAtTop() &&
       functionOp.getBlocks().size() > 1) {
@@ -748,6 +876,11 @@ LogicalResult CppEmitter::emitAttribute(Location loc, Attribute attr) {
         os << "true";
       else
         os << "false";
+    } else if (val.getBitWidth() == 128) {
+      auto low = val.getLoBits(64).getLimitedValue();
+      auto high = val.getHiBits(64).getLimitedValue();
+      os << "(static_cast<__int128>(" << high << ")<<64)|static_cast<__int128>("
+         << low << ")";
     } else {
       SmallString<128> strValue;
       val.toString(strValue, 10, !isUnsigned, false);
@@ -963,7 +1096,7 @@ LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
           .Case<func::CallOp, func::ConstantOp, func::FuncOp, func::ReturnOp>(
               [&](auto op) { return printOperation(*this, op); })
           // SCF ops.
-          .Case<scf::ForOp, scf::IfOp, scf::YieldOp>(
+          .Case<scf::ForOp, scf::WhileOp, scf::IfOp, scf::YieldOp>(
               [&](auto op) { return printOperation(*this, op); })
           // Arithmetic ops.
           .Case<arith::ConstantOp>(
@@ -978,9 +1111,17 @@ LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
   return success();
 }
 
-LogicalResult CppEmitter::emitType(Location loc, Type type) {
+LogicalResult CppEmitter::emitType(Location loc, Type type,
+                                   llvm::raw_ostream &os) {
   if (auto iType = type.dyn_cast<IntegerType>()) {
-    switch (iType.getWidth()) {
+    auto width = iType.getWidth();
+    if (width == 24) {
+      width = 32;
+    }
+    if (width == 40 || width == 48 || width == 56) {
+      width = 64;
+    }
+    switch (width) {
     case 1:
       return (os << "bool"), success();
     case 8:
@@ -988,9 +1129,11 @@ LogicalResult CppEmitter::emitType(Location loc, Type type) {
     case 32:
     case 64:
       if (shouldMapToUnsigned(iType.getSignedness()))
-        return (os << "uint" << iType.getWidth() << "_t"), success();
+        return (os << "uint" << width << "_t"), success();
       else
-        return (os << "int" << iType.getWidth() << "_t"), success();
+        return (os << "int" << width << "_t"), success();
+    case 128:
+      return (os << "__int128"), success();
     default:
       return emitError(loc, "cannot emit integer type ") << type;
     }
@@ -1013,7 +1156,7 @@ LogicalResult CppEmitter::emitType(Location loc, Type type) {
     if (!tType.hasStaticShape())
       return emitError(loc, "cannot emit tensor type with non static shape");
     os << "Tensor<";
-    if (failed(emitType(loc, tType.getElementType())))
+    if (failed(emitType(loc, tType.getElementType(), os)))
       return failure();
     auto shape = tType.getShape();
     for (auto dimSize : shape) {
@@ -1024,13 +1167,33 @@ LogicalResult CppEmitter::emitType(Location loc, Type type) {
     return success();
   }
   if (auto tType = type.dyn_cast<TupleType>())
-    return emitTupleType(loc, tType.getTypes());
+    return emitTupleType(loc, tType.getTypes(), os);
   if (auto oType = type.dyn_cast<emitc::OpaqueType>()) {
     os << oType.getValue();
     return success();
   }
+  if (auto funcType = type.dyn_cast<FunctionType>()) {
+    os << "std::add_pointer<";
+    if (failed(emitTypes(loc, funcType.getResults(), os)))
+      return failure();
+
+    os << "(";
+    bool first = true;
+    for (auto t : funcType.getInputs()) {
+      if (first) {
+        first = false;
+      } else {
+        os << ", ";
+      }
+      if (failed(emitType(loc, t, os)))
+        return failure();
+    }
+
+    os << ")>::type";
+    return success();
+  }
   if (auto pType = type.dyn_cast<emitc::PointerType>()) {
-    if (failed(emitType(loc, pType.getPointee())))
+    if (failed(emitType(loc, pType.getPointee(), os)))
       return failure();
     os << "*";
     return success();
@@ -1038,29 +1201,58 @@ LogicalResult CppEmitter::emitType(Location loc, Type type) {
   return emitError(loc, "cannot emit type ") << type;
 }
 
-LogicalResult CppEmitter::emitTypes(Location loc, ArrayRef<Type> types) {
+LogicalResult CppEmitter::emitTypes(Location loc, ArrayRef<Type> types,
+                                    llvm::raw_ostream &os) {
   switch (types.size()) {
   case 0:
     os << "void";
     return success();
   case 1:
-    return emitType(loc, types.front());
+    return emitType(loc, types.front(), os);
   default:
-    return emitTupleType(loc, types);
+    return emitTupleType(loc, types, os);
   }
 }
 
-LogicalResult CppEmitter::emitTupleType(Location loc, ArrayRef<Type> types) {
-  os << "std::tuple<";
-  if (failed(interleaveCommaWithError(
-          types, os, [&](Type type) { return emitType(loc, type); })))
-    return failure();
-  os << ">";
+LogicalResult CppEmitter::emitTupleType(Location loc, ArrayRef<Type> types,
+                                        llvm::raw_ostream &os) {
+  std::string structName = "tuple";
+  for (size_t i = 0; i < types.size(); i++) {
+    std::string typeStr;
+    llvm::raw_string_ostream sstream(typeStr);
+    if (emitType(loc, types[i], sstream).failed())
+      return failure();
+    structName += "__" + typeStr;
+  }
+  std::regex toReplace("\\*");
+  structName = std::regex_replace(structName, toReplace, "ptr");
+
+  os << structName;
+  if (cachedStructs.count(structName) == 0) {
+    llvm::raw_string_ostream sstream(structDefs);
+
+    sstream << "struct " << structName << " {";
+    for (size_t i = 0; i < types.size(); i++) {
+      if (emitType(loc, types[i], sstream).failed())
+        return failure();
+      sstream << " t" << i << ";";
+    }
+    sstream << "};\n";
+    cachedStructs.insert(structName);
+  }
+
   return success();
 }
 
 LogicalResult emitc::translateToCpp(Operation *op, raw_ostream &os,
                                     bool declareVariablesAtTop) {
-  CppEmitter emitter(os, declareVariablesAtTop);
-  return emitter.emitOperation(*op, /*trailingSemicolon=*/false);
+  std::string resultingCpp;
+  llvm::raw_string_ostream sstream(resultingCpp);
+  CppEmitter emitter(sstream, declareVariablesAtTop);
+  if (emitter.emitOperation(*op, /*trailingSemicolon=*/false).failed()) {
+    return failure();
+  }
+  resultingCpp = emitter.getStructDefs() + resultingCpp;
+  os << resultingCpp;
+  return success();
 }

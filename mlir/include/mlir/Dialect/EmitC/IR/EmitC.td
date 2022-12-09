@@ -60,8 +60,8 @@ def EmitC_ApplyOp : EmitC_Op<"apply", []> {
 def EmitC_GenericOp : EmitC_Op<"generic", []> {
   let summary = "Generic operation";
   let description = [{
-    With the `binOp` operation the binary arithmetic operators can be applied to
-                                                              2 operators
+    With the `generic` operation the arbitrary strings can be generated from
+      a variable number of operands
 
     Example:
 
@@ -76,7 +76,7 @@ def EmitC_GenericOp : EmitC_Op<"generic", []> {
   );
   let results = (outs AnyType:$result);
   let assemblyFormat = [{
-    $formatString  $operands attr-dict `:` type($operands) `->` type($result)
+    $formatString  ($operands^  `:` type($operands))? `->` type($result) attr-dict
   }];
 }
 
