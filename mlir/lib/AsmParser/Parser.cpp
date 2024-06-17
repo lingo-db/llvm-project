@@ -1209,7 +1209,7 @@ ParseResult OperationParser::parseOperation() {
         resultIt += std::get<1>(record);
       }
       state.asmState->finalizeOperationDefinition(
-          op, nameTok.getLocRange(), /*endLoc=*/getLastToken().getEndLoc(),
+          op, nameTok.getLocRange(), /*endLoc=*/getToken().getLoc(),
           asmResultGroups);
     }
 
@@ -1227,7 +1227,7 @@ ParseResult OperationParser::parseOperation() {
   } else if (state.asmState) {
     state.asmState->finalizeOperationDefinition(
         op, nameTok.getLocRange(),
-        /*endLoc=*/getLastToken().getEndLoc());
+        /*endLoc=*/getToken().getLoc());
   }
 
   return success();
@@ -1503,7 +1503,7 @@ Operation *OperationParser::parseGenericOperation(Block *insertBlock,
   if (state.asmState)
     state.asmState->finalizeOperationDefinition(
         op, nameToken.getLocRange(),
-        /*endLoc=*/getLastToken().getEndLoc());
+        /*endLoc=*/getToken().getLoc());
   return op;
 }
 
